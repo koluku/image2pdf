@@ -42,7 +42,6 @@ func main() {
 	})
 
 	for _, path := range paths {
-		fmt.Println(path.Name())
 		if path.IsDir() {
 			continue
 		}
