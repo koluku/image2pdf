@@ -4,10 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cockroachdb/errors"
 
 	"github.com/signintech/gopdf"
 )
@@ -26,55 +30,71 @@ func isImageFile(name string) bool {
 func main() {
 	flag.Parse()
 
-	inputDir := flag.Arg(0)
-	if inputDir == "" {
-		log.Fatal("No argument error")
+	if flag.NArg() == 0 {
+		log.Fatalf("%+v", errors.WithStack(errors.New("input directory is empty")))
 	}
 
-	paths, err := os.ReadDir(inputDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	pdf := gopdf.GoPdf{}
-	pdf.Start(gopdf.Config{
-		Unit: gopdf.Unit_PT,
-	})
-
-	for _, path := range paths {
-		if path.IsDir() {
-			continue
-		}
-		if !isImageFile(path.Name()) {
-			continue
-		}
-
-		file, _ := os.Open(path.Name())
-		defer file.Close()
-
-		src, _, err := image.Decode(file)
+	for _, inputDir := range flag.Args() {
+		paths, err := os.ReadDir(inputDir)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("%+v", errors.WithStack(err))
+		}
+		absPath, err := filepath.Abs(inputDir)
+		if err != nil {
+			log.Fatalf("%+v", errors.WithStack(err))
 		}
 
-		pdf.AddPageWithOption(gopdf.PageOption{
-			PageSize: &gopdf.Rect{
-				W: float64(src.Bounds().Dx()),
-				H: float64(src.Bounds().Dy()),
-			},
+		pdf := gopdf.GoPdf{}
+		pdf.Start(gopdf.Config{
+			Unit: gopdf.Unit_PT,
 		})
-		pdf.Image(path.Name(), 0, 0, &gopdf.Rect{
-			W: float64(src.Bounds().Dx()),
-			H: float64(src.Bounds().Dy()),
-		})
-	}
 
-	ab, err := filepath.Abs(inputDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-	splitedDirs := strings.Split(filepath.ToSlash(ab), "/")
-	if err := pdf.WritePdf(fmt.Sprintf("%s.pdf", splitedDirs[len(splitedDirs)-1])); err != nil {
-		log.Fatal(err)
+		for _, path := range paths {
+			if path.IsDir() {
+				continue
+			}
+			if !isImageFile(path.Name()) {
+				continue
+			}
+
+			file, err := os.Open(filepath.Join(absPath, path.Name()))
+			if err != nil {
+				log.Fatalf("%+v", errors.WithStack(err))
+			}
+			defer file.Close()
+
+			config, _, err := image.DecodeConfig(file)
+			if err != nil {
+				log.Fatalf("%+v", errors.WithStack(err))
+			}
+
+			if config.Height >= config.Width {
+				pdf.AddPageWithOption(gopdf.PageOption{
+					PageSize: &gopdf.Rect{
+						W: float64(842) * float64(config.Width) / float64(config.Height),
+						H: 842,
+					},
+				})
+				pdf.Image(filepath.Join(absPath, path.Name()), 0, 0, &gopdf.Rect{
+					W: float64(842) * float64(config.Width) / float64(config.Height),
+					H: 842,
+				})
+			} else {
+				pdf.AddPageWithOption(gopdf.PageOption{
+					PageSize: &gopdf.Rect{
+						W: 842,
+						H: float64(842) * float64(config.Height) / float64(config.Width),
+					},
+				})
+				pdf.Image(filepath.Join(absPath, path.Name()), 0, 0, &gopdf.Rect{
+					W: 842,
+					H: float64(842) * float64(config.Height) / float64(config.Width),
+				})
+			}
+		}
+		splitedDirs := strings.Split(filepath.ToSlash(absPath), "/")
+		if err := pdf.WritePdf(filepath.Join(absPath, fmt.Sprintf("%s.pdf", splitedDirs[len(splitedDirs)-1]))); err != nil {
+			log.Fatalf("%+v", errors.WithStack(err))
+		}
 	}
 }
